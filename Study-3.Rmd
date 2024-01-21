@@ -1,0 +1,830 @@
+---
+title: "SEM study 3"
+author: "SMK"
+date: "`r Sys.Date()`"
+output: rmdformats::material
+---
+
+# Packages Used
+```{r warning=FALSE, message=FALSE}
+library(tidyverse)
+library(apaTables)
+library(gt)
+library(sjPlot)
+library(rmdformats)
+library(psych)
+library(lm.beta)
+library(BaylorEdPsych)
+library(gtsummary)
+library(ggplot2)
+library(ggthemes)
+library(ggcorrplot)
+library(extrafont)
+library(lavaan)
+library(tidySEM)
+library(semPlot)
+library(RColorBrewer)
+library(viridis)
+library(reshape2)
+
+```
+
+***
+# Dataset
+```{r warning=FALSE, message=FALSE}
+setwd("C:\\Users\\sarah\\Documents\\PhD\\All data files")
+originaldata <- read.csv("Study3AllData.csv",header =TRUE)
+```
+
+## Variables
+```{r warning=FALSE, message=FALSE}
+names(originaldata)
+```
+
+## Composite variables
+```{r warning=FALSE, message=FALSE}
+Filler<-originaldata$F1 + originaldata$F2
+SAtotal<-originaldata$SA1 + originaldata$SA2 + originaldata$SA3 + originaldata$SA4
+LIplus<-originaldata$LI1 + originaldata$LI2 + originaldata$LI3 + originaldata$LI4 + originaldata$LI5 + originaldata$LI6
+LItotal<-originaldata$LI1 + originaldata$LI2 + originaldata$LI3 + originaldata$LI4 + originaldata$LI5
+NRtotal<-originaldata$NR1 + originaldata$NR2 + originaldata$NR4 + originaldata$NR5
+MTtotal<-originaldata$MT1 + originaldata$MT2 + originaldata$MT3 + originaldata$MT4 + originaldata$MT5 + originaldata$MT6
+RMAtotal<-SAtotal+LItotal+NRtotal+MTtotal
+alldata<-cbind(originaldata, Filler, SAtotal, LIplus, LItotal, NRtotal, MTtotal, RMAtotal)
+```
+
+# Data Cleaning
+## Remove cases where duration is less than 4 minutes (240 seconds)
+```{r warning=FALSE, message=FALSE}
+cleandata <- alldata[!(alldata$Duration< 240),]
+```
+
+## Remove cases with over 5% missing data
+```{r warning=FALSE, message=FALSE}
+cleanerdata<-cleandata
+percentmiss<- function(x){sum(is.na(x))/length(x)*100}
+missing= apply(cleanerdata, 1, percentmiss)
+table(missing)
+nomissing<-cleanerdata[missing<5,]
+summary(is.na(nomissing))
+```
+There is still a missing value in Sentence, Filler and Age so Median Value Imputation will be used for this:
+```{r}
+cleanestdata<-nomissing
+medSent<-(median(cleanestdata$Sentence, na.rm = TRUE))
+cleanestdata[is.na(cleanestdata$Sentence), "Sentence"]<-medSent
+medFiller<-(median(cleanestdata$Filler, na.rm = TRUE))
+cleanestdata[is.na(cleanestdata$Filler), "Filler"]<-medFiller
+medAge<-(median(cleanestdata$Age, na.rm = TRUE))
+cleanestdata[is.na(cleanestdata$Age), "Age"]<-medAge
+summary(is.na(cleanestdata))
+```
+## Remove multivariate outliers 
+This analysis will ignore demographic columns (1:17), individual scale and filler items (25:50), LIplus (52) and the RMA composite score (56) for an accurate mahalanobis distance score
+```{r warning=FALSE, message=FALSE}
+mahal<- mahalanobis(cleanestdata[,c(18:24,51,53,54,55)], colMeans(cleanestdata[,c(18:24,51,53,54,55)],na.rm = TRUE),cov(cleanestdata[,c(18:24,51,53,54,55)], use = "pairwise.complete.obs"))
+cutoff<- qchisq(.999,ncol(cleanestdata[,c(18:24,51,53,54,55)]))
+cutoff
+summary(mahal<cutoff)
+```
+
+```{r warning=FALSE, message=FALSE}
+nooutliers<-cleanestdata[mahal<cutoff,]
+```
+
+## Remove failed attention checks
+The filler items act as attention checks in the RMA scale. The items ("This society should devote more effort to preventing rape" and "Victims of rape should be allowed to choose whether they speak with a male or female police officer") are merely statements regarding rape that most people would agree with and thus offer a deviation in response from most other items. However individuals who express strong acceptance of RMA may not agree with these statements and low scores on filler items should not be considered a lack of attention. So, cases where filler scores were outliers and total RMA scores were less than or equal to the mean, were removed.
+
+```{r}
+mean(nooutliers$Filler)-3*sd(cleanestdata$Filler)
+mean(nooutliers$RMAtotal)
+```
+
+```{r}
+finaldata<-nooutliers[!(nooutliers$Filler<=6 & nooutliers$RMAtotal<=43),]
+```
+
+```{r}
+write.csv(finaldata, "finaldata3.csv")
+```
+
+## Subset for analysis
+```{r warning=FALSE, message=FALSE}
+dataset<-finaldata[,c(12:24,51:56)]
+data<-finaldata[,c(12,18:24,51:56)]
+```
+Final dataset has 347 participants.
+
+## Factoring
+```{r warning=FALSE, message=FALSE}
+dataset$Gender= factor(dataset$Gender,levels = c(1,2,3,4,5,6),labels = c("male","female","trans male", "trans female", "genderqueer", "different identity"))
+dataset$Ethnicity= factor(dataset$Ethnicity,levels = c(1:14),labels = c("White Caucasian","White Mexican","White Sephardic Jew", "East Asian", "South Asian", "Middle Eastern", "Native American", "Latino/Hispanic", "Caribbean", "Black British", "African", "Black African American", "Mixed", "Other"))
+dataset$Sexuality= factor(dataset$Sexuality,levels = c(1,2,3,4,5),labels = c("heterosexual","bisexual","homosexual", "asexual", "other sexuality"))
+dataset$Victim_known= factor(dataset$Victim_known,levels = c(0,1,2,3),labels = c("prefer not to answer","don't know victim","friend or family member victim", "victim themself"))
+dataset$False_acc_known= factor(dataset$False_acc_known,levels = c(0,1,2,3),labels = c("prefer not to answer","don't know accused","friend or family member accused", "accused themself"))
+dataset$Verdict= factor(dataset$Verdict,levels = c(0,1),labels = c("Not Guilty", "Guilty"))
+dataset$Likert_verdict= factor(dataset$Likert_verdict,levels = c(1,2,3,4,5,6,7),labels = c("Completely unlikely", "Moderately unlikely", "Slightly unlikely", "Neither likely nor unlikely", "Slightly likely", "Moderately likely", "Completely likely"))
+dataset$Credibility= factor(dataset$Credibility,levels = c(1,2,3,4,5,6,7),labels = c("Completely incredible", "Moderately incredible", "Slightly incredible", "Neither credible nor incredible", "Slightly credible", "Moderately credible", "Completely credible"))
+dataset$Responsibility= factor(dataset$Responsibility,levels = c(1,2,3,4,5,6,7),labels = c("Completely unresponsible", "Moderately unresponsible", "Slightly unresponsible", "Neither responsible nor unresponsible", "Slightly responsible", "Moderately responsible", "Completely responsible"))
+dataset$Empathy= factor(dataset$Empathy,levels = c(1,2,3,4,5),labels = c("Not at all", "Slightly", "Moderately", "A lot", "Completely"))
+```
+***
+# Descriptive Statistics - Independant variables {.tabset}
+
+```{r}
+dataset %>%
+  dplyr::select(Gender, Ethnicity, Sexuality, Victim_known, False_acc_known )%>%
+  tbl_summary(
+    label= list(Gender ~ "Gender",Ethnicity ~ "Ethnicity", Sexuality~ "Sexual Orientation", Victim_known~ "Rape victim known", False_acc_known~ "False accusation known")) %>%
+  modify_caption("<div style='text-align: left;font-weight: bold'> Table 1.<br> Demographic Statistics</div>")
+```
+
+## Age
+```{r warning=FALSE, message=FALSE}
+dataset%>%
+  summarise(Variable= "Age",
+            Mean=mean(Age, na.rm = TRUE),
+            Median= median(Age, na.rm = TRUE),
+            SD= sd(Age, na.rm = TRUE))
+```
+
+## Gender
+```{r warning=FALSE}
+g<-ggplot(data=dataset, aes(Gender))
+g+geom_histogram(stat="Count", aes(fill=as.factor(Gender))) +
+  theme_classic(base_size = 12, base_family = "Cambria") + 
+  labs( title = "Gender", x = "Gender Identity", y= "Frequency") +
+  scale_fill_brewer(palette="Spectral", direction=-1)+
+  scale_x_discrete(guide = guide_axis(n.dodge=2))
+```
+
+## Ethnicity 
+```{r warning=FALSE, message=FALSE}
+e<-ggplot(data=dataset, aes(Ethnicity))
+e+geom_bar(stat="Count", aes(fill=as.factor(Ethnicity))) +
+  theme_classic(base_size = 10,base_family = "Cambria") + 
+  labs(title = "Ethnicity", x = "Ethnicity", y= "Frequency" )+
+  theme(axis.text.x = element_text(angle = 45, hjust=1)) +
+  scale_fill_viridis(discrete = T)
+```
+
+## Sexuality
+```{r warning=FALSE}
+s<-ggplot(data=dataset, aes(Sexuality))
+s+ geom_histogram(stat="Count", aes(fill=as.factor(Sexuality))) +
+  theme_classic(base_size = 10,base_family = "Cambria") + 
+  labs( title = "Sexuality", x = "Sexuality", y= "Frequency" )+
+  scale_fill_brewer(palette="RdPu", direction=-1)
+```
+
+## Victim known
+```{r warning=FALSE}
+v<-ggplot(data=dataset, aes(Victim_known))
+v+geom_histogram(stat="Count", aes(fill=as.factor(Victim_known))) +
+  theme_classic(base_size = 10,base_family = "Cambria") + 
+  labs( title = "Victim known", x = "Victim known", y= "Frequency" ) +
+   theme(axis.text.x = element_text(angle = 20, hjust=1)) +
+  scale_fill_brewer(palette="PRGn")
+
+```
+
+## False Allegations
+```{r warning=FALSE}
+f<-ggplot(data=dataset, aes(False_acc_known))
+f+ geom_histogram(stat="Count",  aes(fill=as.factor(False_acc_known))) +
+    theme_classic(base_size = 10,base_family = "Cambria") + 
+    labs( title = "False Accusation Known", x = "False Accusation Known", y=  "Frequency" ) +
+    theme(axis.text.x = element_text(angle = 20, hjust=1)) +
+    scale_fill_brewer(palette="YlGnBu")
+```
+
+## Total RMA
+
+```{r warning=FALSE, message=FALSE}
+rma<-ggplot(data=dataset, aes(RMAtotal))
+rma+geom_histogram(bins = 20, fill= "white", colour="black") + 
+  theme_classic(base_size = 10,base_family = "Cambria") + 
+  labs( title = "Total Rape Myth Acceptance", x = "Total RMA scores", y= "Frequency" ) + 
+  scale_x_continuous(breaks = seq(20, 120, 10))
+```
+
+## RMA factor descriptives
+
+```{r}
+data %>%
+  dplyr::select(SAtotal, MTtotal, NRtotal, LItotal, LIplus, RMAtotal)%>%
+  tbl_summary(
+    label= list( SAtotal ~ "Total SA", MTtotal ~ "Total MT", NRtotal  ~ "Total NR", LItotal  ~ "Total LI", LIplus ~ "LI plus", RMAtotal  ~ "Total U-IRMA"),
+  type= list(all_continuous() ~ "continuous2"),
+   digits = all_continuous() ~ 2,
+    statistic= all_continuous()~ c("{mean}","{median}","{sd}","{min}, {max}"))%>%       
+  modify_caption("<div style='text-align: left;font-weight: bold'> Table 3.<br> U-IRMA Statistics</div>")
+```
+
+# Scale Reliability
+```{r}
+fullscale<- finaldata[,c(25:28, 31:33, 35:39, 41:42, 44:48)]
+alpha(fullscale)
+```
+
+
+```{r}
+extrascale<-finaldata[, c(25:28, 31:33, 35:39, 41:42, 44:49)]
+alpha (extrascale)
+```
+
+# Descriptives - Dependant variables {.tabset}
+
+```{r}
+describe(data[,3:14], fast=T)
+```
+## Verdict
+```{r}
+Ver<-table(dataset$Verdict)
+Ver
+barplot(Ver, col= grey.colors(2), main = "Verdict")
+```
+
+## Likert Verdict
+```{r warning=FALSE}
+dataset%>%
+  dplyr::select(Likert_verdict)%>%
+  tbl_summary()
+
+lv<-ggplot(data=dataset, aes(Likert_verdict))
+lv+  geom_histogram(stat="Count", aes(fill=as.factor(Likert_verdict))) +
+  theme_classic(base_size = 10,base_family = "Cambria") + ylim(c(0,140))+
+  theme(axis.text.x = element_text(angle = 45, hjust=1)) + 
+  labs( title = "Likert Verdict", x = "Likelihood of defendent's guilt", y= "Frequency")+ 
+  scale_fill_brewer(palette="RdYlGn")
+
+```
+
+## Confidence
+```{r}
+co<-ggplot(data=dataset, aes(Confidence))
+co+ geom_histogram(bins = 10, fill= "lightseagreen", colour="black")+   
+  scale_x_continuous(breaks = seq(0, 100, 10))+ 
+  theme_classic(base_size = 10,base_family = "Cambria") + 
+  labs( title = "Confidence in Verdict Decisions", x = "% Confidence", y= "Frequency" )
+```
+
+## Sentence
+```{r}
+se<-ggplot(data=dataset, aes(Sentence))
+se+ geom_histogram(bins = 10, fill= "olivedrab", colour="black")+   
+  scale_x_continuous(breaks = seq(0, 10, 1))+ 
+  theme_classic(base_size = 10,base_family = "Cambria") +labs( title = "Sentence Recommendation", x = "Sentence in years", y= "Frequency" )
+```
+
+## Credibility
+```{r warning=FALSE}
+dataset%>%
+  dplyr::select(Credibility)%>%
+  tbl_summary()
+
+cr<-ggplot(data=dataset, aes(Credibility))
+cr+  geom_histogram(stat="Count", aes(fill=as.factor(Credibility))) +
+  theme_classic(base_size = 10,base_family = "Cambria") + ylim(c(0,140))+
+  theme(axis.text.x = element_text(angle = 45, hjust=1)) + 
+  labs( title = "Credibility", x = "Credibility Rating", y= "Frequency" )+
+  scale_fill_brewer(palette="RdYlGn")
+```
+
+## Responsibility
+```{r warning=FALSE}
+dataset%>%
+  dplyr::select(Responsibility)%>%
+  tbl_summary()
+
+re<-ggplot(data=dataset, aes(Responsibility))
+re+  geom_histogram(stat="Count", aes(fill=as.factor(Responsibility))) +
+  theme_classic(base_size = 10,base_family = "Cambria") + ylim(c(0,140))+
+  theme(axis.text.x = element_text(angle = 45, hjust=1)) + 
+  labs(title = "Responsibility", x = "Responsibility rating", y= "Frequency" )+
+  scale_fill_brewer(palette="RdYlGn", direction = -1)
+```
+
+## Empathy
+```{r warning=FALSE, message=FALSE}
+dataset%>%
+  dplyr::select(Empathy)%>%
+  tbl_summary()
+
+em<-ggplot(data=dataset, aes(Empathy))
+em+  geom_histogram(stat="Count", aes(fill=as.factor(Empathy))) +
+  theme_classic(base_size = 10,base_family = "Cambria") + ylim(c(0,140))+
+  theme(axis.text.x = element_text(angle = 45, hjust=1)) + 
+  labs(title = "Empathy", x = "Empathy rating", y= "Frequency" ) +
+  scale_fill_brewer(palette="RdYlGn")
+```
+
+***
+# Correlation Matrix {.tabset}
+Pearson's correlation coefficients were generated in a matrix in order to explore relationships between all independent and dependent variables.
+
+## Neat Matrix
+```{r}
+tab_corr(data)
+```
+
+
+## Scatterplot
+```{r warning=FALSE, message=FALSE}
+corr<-round(cor(data),2)
+ggcorrplot(corr,type = "lower", 
+           lab = TRUE, 
+           lab_size = 3, 
+           method="circle",
+           colors= c("deepskyblue4","white","green4"),
+           ggtheme=theme_classic (base_family = "Times", base_size = 10)) 
+           
+```
+
+```{r}
+Guiltydata<-data[(data$Verdict==1),]
+cor(Guiltydata$Likert_verdict, Guiltydata$Confidence)
+
+
+Notguiltydata<-data[(data$Verdict==0),]
+cor(Notguiltydata$Likert_verdict, Notguiltydata$Confidence)
+
+
+```
+
+
+***
+# Mean Comparison {.tabset}
+3 sets of independent samples t-tests were run to compare differences in the means for all dependent and independent variables based on Verdict decisions and Gender. Eta-squared values are also presented for an effect size; Cohen's(1988) guidelines for interpreting these values are:
+.01=small effect, .06=moderate effect, .14=large effect
+
+## Verdict t-tests
+```{r}
+verttest<-lapply(data[,c(3:13)],function(x)t.test(x~dataset$Verdict,var.eq=F))
+vertable<-map_df(verttest, broom::tidy, .id="var")
+vertable
+print.data.frame(vertable)
+
+tvalues<-vertable$statistic
+eta<-function(x){(x*x)/(x*x+(n-1))}
+n=347
+eta(tvalues)
+```
+Boxplot
+```{r}
+datalong<-melt(data[,c(2:9, 11:14)], id.var=c("Verdict"))
+box1 <- ggplot(data = datalong, aes(x=variable, y=value, fill=factor(Verdict))) + geom_boxplot()
+box1 + facet_wrap( ~ variable, scales="free")+theme_classic(base_size = 10)+  scale_fill_discrete(name = "Verdict", labels = c("Not Guilty", "Guilty"))  
+
+```
+## Gender differences
+```{r}
+Sex<-factor(data$Gender,levels = c(1,2),labels = c( "Male","Female"))
+datas<-cbind(data, Sex= as.numeric(Sex))
+
+sexttest<-lapply(data[,c(3:9, 11:14)], function(x)t.test(x~Sex,var.eq=F))
+sexttable<-map_df(sexttest,broom::tidy, .id="var")
+sexttable
+print.data.frame(sexttable)
+
+tvalues2<-sexttable$statistic
+eta(tvalues2)
+```
+Boxplot
+```{r}
+datalong2<-melt(datas[,c(3:9, 11:15)], id.var=c("Sex"))
+box2 <- ggplot(data = datalong2, aes(x=variable, y=value, fill=factor(Sex))) + geom_boxplot()
+box2 + facet_wrap( ~ variable, scales="free")+theme_classic(base_size = 10)+  scale_fill_discrete(name = "Gender", labels = c("Male", "Female", "Other Gender"))
+```
+
+Chi-square test
+```{r warning=FALSE, message=FALSE}
+Guilt<-factor(data$Verdict,levels = c(0,1),labels = c("Not Guilty", "Guilty"))
+datas<-cbind(datas,Guilt)
+chitable<-table(Sex,Guilt)
+chisq.test(chitable, correct = T)
+barplot(chitable, beside=T, legend=T)
+```
+
+***
+
+# Hierarchical regression
+
+```{r warning=FALSE, message=FALSE}
+regoutput1=lm(Likert_verdict~Gender+Confidence,data)
+summary(regoutput1)
+lm.beta(regoutput1)
+apa.reg.table(regoutput1)
+
+```
+
+## Step 2
+```{r warning=FALSE, message=FALSE}
+regoutput2=lm(Likert_verdict~Gender+Confidence+SAtotal+NRtotal+LItotal,data)
+summary(regoutput2)
+lm.beta(regoutput2)
+apa.reg.table(regoutput2)
+```
+
+
+## Step 3
+```{r warning=FALSE, message=FALSE}
+regoutput3=lm(Likert_verdict~Gender+Confidence+SAtotal+NRtotal+LItotal+Credibility+Responsibility+Empathy,data)
+summary(regoutput3)
+lm.beta(regoutput3)
+```
+
+## Regression Model comparison
+```{r warning=FALSE, message=FALSE}
+anova(regoutput1,regoutput2)
+anova(regoutput1,regoutput2,regoutput3)
+apa.reg.table(regoutput3)
+tbl_regression(regoutput3)
+```
+
+# Logistic regression 
+```{r warning=FALSE, message=FALSE}
+logmodel<-glm(Verdict~ Confidence + Gender + SAtotal + LItotal + NRtotal + Credibility + Responsibility + Empathy, family = binomial(link = logit), data= data)
+summary(logmodel)
+logmodel%>%
+  tbl_regression(exponentiate = TRUE)%>% add_vif()
+```
+
+The test below checks whether the change in errors is significantly less for the model without predictors. 
+```{r}
+options(scipen = 999)
+chidiff<-logmodel$null.deviance-logmodel$deviance
+dfdiff<-logmodel$df.null-logmodel$df.residual
+chidiff
+dfdiff
+pchisq(chidiff, dfdiff, lower.tail = F)
+```
+
+```{r}
+PseudoR2(logmodel)
+```
+
+```{r}
+correct<-logmodel$fitted.values
+binarycorrect<-ifelse(correct>0.5,1,0)
+binarycorrect<-factor(binarycorrect, levels=c(0,1), labels=c("Not Predicted","Predicted"))
+Verdict<-factor(data$Verdict, levels = c(0,1), labels = c("Not Guilty", "Guilty"))
+table(data$Verdict, binarycorrect)
+```
+
+***
+# Mediation Analysis {.tabset}
+
+```{r}
+Verdict<-data$Verdict
+LItotal<-data$LItotal
+Credibility<-data$Credibility
+SAtotal<-data$SAtotal
+Responsibility<-data$Responsibility
+NRtotal<-data$NRtotal
+Empathy<-data$Empathy
+```
+
+## Credibility
+```{r warning=FALSE, message=FALSE}
+med1 <- '
+    # direct effect
+      Verdict ~ c*LItotal
+      direct := c
+  
+    # regressions
+      Credibility ~ a*LItotal
+      Verdict ~ b*Credibility
+  
+    # indirect effect (a*b)
+      indirect := a*b
+  
+    # total effect
+      total := c + (a*b)
+'
+credmed <- sem(med1, data = data, ordered = c("Verdict"), se = "bootstrap", bootstrap = 5000, estimator= "DWLS")
+```
+
+When the ordered= argument is used, lavaan will automatically switch to the WLSMV estimator but diagonally weighted least squares (DWLS) is used estimate the model parameters. However, it will use the full weight matrix to compute robust standard errors, and a mean- and variance-adjusted test statistic (Rosseel, 2021).
+
+```{r warning=FALSE, message=FALSE}
+semPaths(credmed, what="std",whatLabels = "std", sizeMan = 15, sizeInt = 15, sizeLat = 15,edge.label.cex=1.5, rotation=2, style = "lisrel", intercepts = F, residuals = F, nCharNodes=0, fade=F)
+```
+
+
+```{r warning=FALSE, message=FALSE}
+summary(credmed, standardize = TRUE, rsquare = TRUE)
+parameterestimates(credmed, standardized = TRUE, boot.ci.type = "bca.simple")
+```
+
+## Responsibility
+```{r warning=FALSE, message=FALSE}
+med2 <- '
+    # direct effect
+      Verdict ~ c*SAtotal
+      direct := c
+  
+    # regressions
+      Responsibility ~ a*SAtotal
+      Verdict ~ b*Responsibility
+  
+    # indirect effect (a*b)
+      indirect := a*b
+  
+    # total effect
+      total := c + (a*b)
+'
+respmed <- sem(med2, data = data, ordered = c("Verdict"), se = "bootstrap", bootstrap = 5000, estimator= "DWLS")
+```
+
+
+```{r warning=FALSE, message=FALSE}
+semPaths(respmed, what="std",whatLabels = "std", sizeMan = 15, sizeInt = 15, sizeLat = 15,edge.label.cex=1.5, rotation=2, style = "lisrel", intercepts = F, residuals = F, nCharNodes=0)
+```
+
+```{r warning=FALSE, message=FALSE}
+summary(respmed, standardize = TRUE, rsquare = TRUE)
+parameterestimates(respmed, standardized = TRUE, boot.ci.type = "bca.simple")
+```
+
+## Empathy
+```{r warning=FALSE, message=FALSE}
+med3 <- '
+    # direct effect
+      Verdict ~ c*NRtotal
+      direct := c
+  
+    # regressions
+      Empathy ~ a*NRtotal
+      Verdict ~ b*Empathy
+  
+    # indirect effect (a*b)
+      indirect := a*b
+  
+    # total effect
+      total := c + (a*b)
+'
+empmed <- sem(med3, data = data, ordered = c("Verdict"), se = "bootstrap", bootstrap = 5000, estimator= "DWLS")
+```
+
+
+```{r warning=FALSE, message=FALSE}
+semPaths(empmed, what="std",whatLabels = "std", sizeMan = 15, sizeInt = 15, sizeLat = 15,edge.label.cex=1.5, rotation=2, style = "lisrel", intercepts = F, residuals = F, nCharNodes=0)
+```
+
+```{r warning=FALSE, message=FALSE}
+summary(empmed, standardize = TRUE, rsquare = TRUE)
+parameterestimates(empmed, standardized = TRUE, boot.ci.type = "bca.simple")
+
+```
+
+
+***
+# CFA
+
+```{r}
+LIcfa<-'
+LI=~1*LI1+LI2+LI3+LI4+LI5'
+LIfit<-cfa(LIcfa, finaldata)
+summary(LIfit, fit.measures=T)
+
+
+```
+
+```{r}
+LIcfa2<-'
+LI=~1*LI1+LI2+LI3+LI4+LI5+LI6'
+LIfit2<-cfa(LIcfa2, finaldata)
+summary(LIfit2, fit.measures=T)
+
+```
+
+
+```{r}
+SAcfa<-'
+SA=~1*SA1+SA2+SA3+SA4'
+SAfit<-cfa(SAcfa, finaldata)
+summary(SAfit, fit.measures=T)
+
+```
+
+```{r}
+NRcfa<-'
+NR=~1*NR1+NR2+NR4'
+NRfit<-cfa(NRcfa, finaldata)
+summary(NRfit, fit.measures=T)
+
+```
+
+```{r}
+CFAmodel<-'
+LI=~1*LI1+LI2+LI3+LI4+LI5+LI6
+SA=~1*SA1+SA2+SA3+SA4
+NR=~1*NR1+NR2+NR4+NR5
+SA~~LI+NR
+LI~~NR'
+CFAfit<-cfa(CFAmodel, finaldata)
+summary(CFAfit, fit.measures=T)
+modificationindices(CFAfit, sort=T)
+```
+
+```{r}
+CFAmodel1<-'
+LI=~1*LI1+LI2+LI3+LI4+LI5
+SA=~1*SA1+SA2+SA3+SA4
+NR=~1*NR1+NR2+NR4+NR5
+SA~~LI+NR
+LI~~NR
+'
+CFAfit1<-cfa(CFAmodel1, finaldata)
+summary(CFAfit1, fit.measures=T)
+modificationindices(CFAfit1, sort=T)
+```
+
+# SEM
+```{r}
+semdata <- finaldata %>% 
+   mutate(Scaleconf = Confidence / 10)
+```
+
+
+```{r warning=FALSE, message=FALSE}
+SEMmodel<-'
+#measurement model
+LI=~1*LI1+LI2+LI3+LI4+LI5
+SA=~1*SA1+SA2+SA3+SA4
+NR=~1*NR1+NR2+NR4+NR5
+
+
+#Regression equations
+Verdict~b*Credibility+e*Responsibility+y*Empathy
+Verdict~c*LI + f*SA + z*NR
+Credibility~Empathy
+Credibility~a*LI
+Responsibility~d*SA
+Empathy~x*NR
+
+#direct & indirect paths
+indirectcred := a*b
+totalcred := c + (a*b)
+
+indirectresp := d*e
+totalresp := f + (d*e)
+
+indirectemp := x*y
+totalemp := z + (x*y)
+
+#Estimating endogenous variables covariance
+SA~~LI+NR
+LI~~NR
+
+'
+
+fitSEMmodel<-sem(SEMmodel, data=semdata, ordered = c("Verdict"))
+```
+
+
+```{r}
+set.seed(2021)
+summary(fitSEMmodel, fit.measures=TRUE)
+parameterestimates(fitSEMmodel,standardized = TRUE, rsquare=TRUE, output="text")
+modificationindices(fitSEMmodel, sort=TRUE)
+```
+
+## model 1- remove direct paths
+
+```{r}
+
+SEMmodel1<-'
+#measurement model
+LI=~1*LI1+LI2+LI3+LI4+LI5
+SA=~1*SA1+SA2+SA3+SA4 
+NR=~1*NR1+NR2+NR4+NR5 
+
+
+#regression equations
+Verdict~b*Credibility+e*Responsibility+y*Empathy
+Credibility~Empathy
+Credibility~a*LI
+Responsibility~d*SA
+Empathy~x*NR
+
+
+#Indirect pathways
+indirectcred := a*b
+indirectresp := d*e
+indirectemp := x*y
+
+
+#covariance
+SA~~LI+NR
+LI~~NR
+
+'
+fitSEMmodel1<-sem(SEMmodel1, data=semdata, ordered = c("Verdict"))
+
+
+set.seed(2021)
+summary(fitSEMmodel1, fit.measures=TRUE)
+parameterestimates(fitSEMmodel1,standardized = TRUE)
+modificationindices(fitSEMmodel1, sort=TRUE)
+
+```
+
+
+## model 2 - add resp to emp
+```{r}
+SEMmodel2<-'
+#measurement model
+LI=~1*LI1+LI2+LI3+LI4+LI5
+SA=~1*SA1+SA2+SA3+SA4 
+NR=~1*NR1+NR2+NR4+NR5 
+
+
+#regression equation
+Verdict~b*Credibility+d*Responsibility+f*Empathy
+Credibility~ Empathy 
+Empathy~ Responsibility
+Credibility~a*LI
+Responsibility~c*SA
+Empathy~e*NR
+
+
+#Indirect pathways
+indirectcred := a*b
+indirectresp := c*d
+indirectemp := e*f
+
+
+#Estimating endogenous variables covariance
+SA~~LI+NR
+LI~~NR
+
+'
+fitSEMmodel2<-sem(SEMmodel2, data=semdata, ordered = c("Verdict"))
+
+
+
+set.seed(2021)
+summary(fitSEMmodel2, fit.measures=TRUE)
+parameterestimates(fitSEMmodel2,standardized = TRUE)
+modificationindices(fitSEMmodel2, sort=TRUE)
+
+```
+
+
+## model 3 - alternative add resp to cred
+```{r}
+SEMmodel3<-'
+#measurement model
+LI=~1*LI1+LI2+LI3+LI4+LI5+LI6
+SA=~1*SA1+SA2+SA3+SA4 
+NR=~1*NR1+NR2+NR4+NR5 
+
+
+#regression equations
+Verdict~b*Credibility+d*Responsibility+f*Empathy
+Credibility~Empathy+Responsibility
+Credibility~a*LI
+Responsibility~c*SA
+Empathy~e*NR
+
+
+#Indirect pathways
+indirectcred := a*b
+indirectresp := c*d
+indirectemp := e*f
+
+
+
+#Estimating endogenous variables covariance
+SA~~LI+NR
+LI~~NR
+
+'
+
+fitSEMmodel3<-sem(SEMmodel3, data=semdata, ordered = c("Verdict"))
+
+
+
+set.seed(2021)
+summary(fitSEMmodel3, fit.measures=TRUE)
+parameterestimates(fitSEMmodel3,standardized = TRUE)
+modificationindices(fitSEMmodel3, sort=TRUE)
+```
+
+
+# Measurement Invariance
+
+Configural
+```{r}
+sex <- ifelse(semdata$Gender == 1, 1, 0)
+semdata1<-cbind(semdata, sex)
+
+
+configmodel<-sem(fitSEMmodel3, data=semdata1, ordered = c("Verdict"), group= "sex", meanstructure = TRUE)
+summary(configmodel)
+fitMeasures(configmodel,c("chisq", "df", "pvalue", "cfi","rmsea","srmr"))
+```
+
+
